@@ -59,7 +59,7 @@ export class PlayScene extends Phaser.Scene {
   private joystick!: VirtualJoystick;
 
   constructor() {
-    super({ key: 'PlayScene' });
+    super({ key: 'WG_PlayScene' });
   }
 
   create(): void {

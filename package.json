@@ -1,15 +1,15 @@
 {
-  "name": "wheelchair-getaway",
-  "version": "0.1.0",
+  "name": "isaac-games",
+  "version": "0.2.0",
   "type": "module",
-  "description": "An endless chase game - escape the cop in your wheelchair!",
+  "description": "Isaac's Game Collection - Multiple games in one!",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": ["game", "phaser", "endless-runner"],
+  "keywords": ["game", "phaser", "arcade", "collection"],
   "author": "Navarro Brothers",
   "license": "MIT",
   "dependencies": {

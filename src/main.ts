@@ -1,22 +1,32 @@
 import Phaser from 'phaser';
-import { BootScene } from './scenes/BootScene';
-import { PlayScene } from './scenes/PlayScene';
-import { GAME_WIDTH, GAME_HEIGHT } from './config/gameConfig';
+
+// Menu
+import { MenuScene } from './menu/MenuScene';
+
+// Wheelchair Getaway scenes
+import { BootScene as WG_BootScene } from './games/wheelchair-getaway/scenes/BootScene';
+import { PlayScene as WG_PlayScene } from './games/wheelchair-getaway/scenes/PlayScene';
+
+// Alien Invasion scenes
+import { BootScene as AI_BootScene } from './games/alien-invasion/scenes/BootScene';
+import { PlayScene as AI_PlayScene } from './games/alien-invasion/scenes/PlayScene';
+
+// Game dimensions
+const GAME_WIDTH = 400;
+const GAME_HEIGHT = 600;
 
 /**
- * Main entry point
- * ELI5: This is where we tell Phaser "here's how big the game is, here's what scenes to use, GO!"
+ * Isaac's Games - Main Entry Point
+ * A collection of fun games!
  */
 
-// Phaser game configuration
 const config: Phaser.Types.Core.GameConfig = {
-  type: Phaser.AUTO, // Automatically choose WebGL or Canvas
+  type: Phaser.AUTO,
   parent: 'game-container',
   backgroundColor: '#1a1a2e',
 
-  // Scale manager for responsive sizing - RESIZE mode for full screen support
   scale: {
-    mode: Phaser.Scale.RESIZE, // Resize to fill available space
+    mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: GAME_WIDTH,
     height: GAME_HEIGHT,
@@ -30,25 +40,29 @@ const config: Phaser.Types.Core.GameConfig = {
     },
   },
 
-  // Physics
   physics: {
     default: 'arcade',
     arcade: {
-      gravity: { x: 0, y: 0 }, // Top-down, no gravity
-      debug: false, // Set to true to see hitboxes
+      gravity: { x: 0, y: 0 },
+      debug: false,
     },
   },
 
-  // Our game scenes
-  scene: [BootScene, PlayScene],
+  // All scenes - MenuScene is first (entry point)
+  scene: [
+    MenuScene,
+    // Wheelchair Getaway
+    WG_BootScene,
+    WG_PlayScene,
+    // Alien Invasion
+    AI_BootScene,
+    AI_PlayScene,
+  ],
 };
 
-// Create the game!
 const game = new Phaser.Game(config);
 
-// Log for debugging
-console.log('Wheelchair Getaway - Game Starting...');
+console.log("🎮 Isaac's Games - Starting...");
 console.log('Phaser version:', Phaser.VERSION);
 
-// Export for potential use elsewhere
 export default game;
