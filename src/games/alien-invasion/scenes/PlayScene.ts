@@ -16,6 +16,7 @@ import {
   ALIENS_PER_WAVE,
   WAVES_BEFORE_BOSS,
 } from '../config/gameConfig';
+import { MobileControls } from '../ui/MobileControls';
 
 interface Alien {
   x: number;
@@ -92,6 +93,7 @@ export class PlayScene extends Phaser.Scene {
   // Controls
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
+  private mobileControls!: MobileControls;
 
   // Game state
   private isGameOver: boolean = false;
@@ -136,7 +138,7 @@ export class PlayScene extends Phaser.Scene {
     this.damageOverlay = this.add.rectangle(width / 2, height / 2, width, height, 0xff0000, 0);
     this.damageOverlay.setDepth(40);
 
-    // Setup controls
+    // Setup keyboard controls
     if (this.input.keyboard) {
       this.cursors = this.input.keyboard.createCursorKeys();
       this.wasd = {
@@ -147,23 +149,15 @@ export class PlayScene extends Phaser.Scene {
       };
     }
 
-    // Shooting
-    this.input.on('pointerdown', () => {
-      this.shoot();
-    });
+    // Setup mobile controls (joystick + shoot button)
+    this.mobileControls = new MobileControls(this);
 
-    // Touch controls for mobile (swipe to turn)
-    let startX = 0;
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      startX = pointer.x;
-    });
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.isDown) {
-        const deltaX = pointer.x - startX;
-        this.playerAngle += deltaX * 0.003;
-        startX = pointer.x;
-      }
-    });
+    // Desktop shooting (only if not touch device)
+    if (!this.sys.game.device.input.touch) {
+      this.input.on('pointerdown', () => {
+        this.shoot();
+      });
+    }
 
     // Create game over screen
     this.createGameOverScreen(width, height);
@@ -381,32 +375,63 @@ export class PlayScene extends Phaser.Scene {
     let moveX = 0;
     let moveY = 0;
 
-    // Forward/backward (W/S or Up/Down)
-    if (this.wasd.W.isDown || this.cursors.up.isDown) {
-      moveX = Math.cos(this.playerAngle) * PLAYER_SPEED;
-      moveY = Math.sin(this.playerAngle) * PLAYER_SPEED;
-    }
-    if (this.wasd.S.isDown || this.cursors.down.isDown) {
-      moveX = -Math.cos(this.playerAngle) * PLAYER_SPEED;
-      moveY = -Math.sin(this.playerAngle) * PLAYER_SPEED;
-    }
+    // Check for mobile controls first
+    if (this.mobileControls.isActive()) {
+      // Mobile: Use joystick for movement
+      const forward = this.mobileControls.moveForward;
+      const strafe = this.mobileControls.moveStrafe;
 
-    // Strafe (A/D)
-    if (this.wasd.A.isDown) {
-      moveX += Math.cos(this.playerAngle - Math.PI / 2) * PLAYER_SPEED;
-      moveY += Math.sin(this.playerAngle - Math.PI / 2) * PLAYER_SPEED;
-    }
-    if (this.wasd.D.isDown) {
-      moveX += Math.cos(this.playerAngle + Math.PI / 2) * PLAYER_SPEED;
-      moveY += Math.sin(this.playerAngle + Math.PI / 2) * PLAYER_SPEED;
-    }
+      // Forward/backward movement
+      if (Math.abs(forward) > 0.1) {
+        moveX += Math.cos(this.playerAngle) * PLAYER_SPEED * forward;
+        moveY += Math.sin(this.playerAngle) * PLAYER_SPEED * forward;
+      }
 
-    // Turn (Left/Right arrows)
-    if (this.cursors.left.isDown) {
-      this.playerAngle -= PLAYER_ROT_SPEED;
-    }
-    if (this.cursors.right.isDown) {
-      this.playerAngle += PLAYER_ROT_SPEED;
+      // Strafe movement
+      if (Math.abs(strafe) > 0.1) {
+        moveX += Math.cos(this.playerAngle + Math.PI / 2) * PLAYER_SPEED * strafe;
+        moveY += Math.sin(this.playerAngle + Math.PI / 2) * PLAYER_SPEED * strafe;
+      }
+
+      // Turn from swipe
+      this.playerAngle += this.mobileControls.turnDelta;
+
+      // Check shoot
+      if (this.mobileControls.shouldShoot) {
+        this.shoot();
+      }
+
+      // Reset frame-specific values
+      this.mobileControls.resetFrame();
+    } else {
+      // Desktop: Keyboard controls
+      // Forward/backward (W/S or Up/Down)
+      if (this.wasd?.W?.isDown || this.cursors?.up?.isDown) {
+        moveX = Math.cos(this.playerAngle) * PLAYER_SPEED;
+        moveY = Math.sin(this.playerAngle) * PLAYER_SPEED;
+      }
+      if (this.wasd?.S?.isDown || this.cursors?.down?.isDown) {
+        moveX = -Math.cos(this.playerAngle) * PLAYER_SPEED;
+        moveY = -Math.sin(this.playerAngle) * PLAYER_SPEED;
+      }
+
+      // Strafe (A/D)
+      if (this.wasd?.A?.isDown) {
+        moveX += Math.cos(this.playerAngle - Math.PI / 2) * PLAYER_SPEED;
+        moveY += Math.sin(this.playerAngle - Math.PI / 2) * PLAYER_SPEED;
+      }
+      if (this.wasd?.D?.isDown) {
+        moveX += Math.cos(this.playerAngle + Math.PI / 2) * PLAYER_SPEED;
+        moveY += Math.sin(this.playerAngle + Math.PI / 2) * PLAYER_SPEED;
+      }
+
+      // Turn (Left/Right arrows)
+      if (this.cursors?.left?.isDown) {
+        this.playerAngle -= PLAYER_ROT_SPEED;
+      }
+      if (this.cursors?.right?.isDown) {
+        this.playerAngle += PLAYER_ROT_SPEED;
+      }
     }
 
     // Apply movement with collision
