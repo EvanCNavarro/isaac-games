@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
 import {
-  COLORS,
   STARTING_DISTANCE,
   CATCH_DISTANCE,
   OIL_SLICK_COUNT,
@@ -15,25 +14,28 @@ import { Obstacle, ObstacleType } from '../entities/Obstacle';
 import { VirtualJoystick } from '../ui/VirtualJoystick';
 
 /**
- * PlayScene - Main gameplay scene
- * ELI5: This is where all the action happens! The wheelchair runs, the cop chases.
+ * PlayScene - Main gameplay scene with pseudo-3D perspective
+ * Creates an over-the-shoulder view with objects scaling as they approach
  */
 export class PlayScene extends Phaser.Scene {
   private player!: Player;
   private cop!: Cop;
 
-  // Road scrolling
-  private roadLines: Phaser.GameObjects.Rectangle[] = [];
-  private roadScrollSpeed: number = 300;
-  private roadWidth: number = 0;
-  private roadLeftEdge: number = 0;
+  // Perspective settings
+  private horizon: number = 0; // Y position of horizon
+  private vanishX: number = 0; // X position of vanishing point
+  private roadTopWidth: number = 0; // Road width at horizon
+  private roadBottomWidth: number = 0; // Road width at bottom
 
-  // Collectibles
+  // Road elements
+  private roadGraphics!: Phaser.GameObjects.Graphics;
+  private roadScrollOffset: number = 0;
+  private roadScrollSpeed: number = 400;
+
+  // Collectibles & Obstacles
   private collectibles: Collectible[] = [];
-  private spawnTimer: number = 0;
-
-  // Obstacles
   private obstacles: Obstacle[] = [];
+  private spawnTimer: number = 0;
   private obstacleSpawnTimer: number = 0;
 
   // Game state
@@ -44,18 +46,16 @@ export class PlayScene extends Phaser.Scene {
   private oilSlicksRemaining: number = OIL_SLICK_COUNT;
   private hasShield: boolean = false;
 
-  // Oil slicks dropped by player
-  private oilSlicks: Phaser.GameObjects.Ellipse[] = [];
+  // Oil slicks
+  private oilSlicks: { x: number; y: number; graphic: Phaser.GameObjects.Ellipse }[] = [];
 
-  // UI elements
+  // UI
   private scoreText!: Phaser.GameObjects.Text;
   private coinsText!: Phaser.GameObjects.Text;
   private copDistanceText!: Phaser.GameObjects.Text;
   private oilSlickText!: Phaser.GameObjects.Text;
   private shieldIndicator!: Phaser.GameObjects.Container;
   private gameOverContainer!: Phaser.GameObjects.Container;
-
-  // Mobile controls
   private joystick!: VirtualJoystick;
 
   constructor() {
@@ -65,7 +65,13 @@ export class PlayScene extends Phaser.Scene {
   create(): void {
     const { width, height } = this.scale;
 
-    // Reset game state
+    // Setup perspective parameters
+    this.horizon = height * 0.32; // Horizon at 32% from top
+    this.vanishX = width / 2;
+    this.roadTopWidth = width * 0.15; // Narrow at horizon
+    this.roadBottomWidth = width * 1.2; // Wide at bottom (extends past edges)
+
+    // Reset state
     this.score = 0;
     this.coins = 0;
     this.gameTime = 0;
@@ -75,226 +81,281 @@ export class PlayScene extends Phaser.Scene {
     this.collectibles = [];
     this.obstacles = [];
     this.oilSlicks = [];
-    this.roadLines = [];
     this.spawnTimer = 0;
     this.obstacleSpawnTimer = 0;
+    this.roadScrollOffset = 0;
 
-    // Create the road
+    // Create scene layers
+    this.createSkyAndHorizon(width, height);
     this.createRoad(width, height);
 
-    // Create player (positioned higher on screen for isometric feel - see more ahead)
-    this.player = new Player(this, width / 2, height * 0.75);
+    // Create player (positioned in lower portion)
+    const playerY = height * 0.78;
+    this.player = new Player(this, width / 2, playerY);
+    this.player.setScale(1.2); // Player is close, so larger
 
-    // Create cop (starts behind player - off screen)
-    this.cop = new Cop(this, width / 2, height * 0.75 + STARTING_DISTANCE);
+    // Create cop (starts behind/below player)
+    this.cop = new Cop(this, width / 2, height + 50);
+    this.cop.setScale(1.0);
 
     // Create UI
     this.createUI(width);
-
-    // Create game over screen (hidden initially)
     this.createGameOverScreen(width, height);
 
-    // Setup keyboard for oil slick
+    // Input
     if (this.input.keyboard) {
       this.input.keyboard.on('keydown-SPACE', () => this.dropOilSlick());
     }
-
-    // Create virtual joystick for mobile
     this.joystick = new VirtualJoystick(this);
-
-    // Add oil slick button for mobile (bottom right)
     this.createMobileOilSlickButton(width, height);
 
-    console.log('PlayScene started! Use WASD or Arrow Keys to move. SPACE to drop oil slick.');
+    console.log('Wheelchair Getaway - Perspective Mode');
   }
 
-  private createRoad(width: number, height: number): void {
-    // Calculate road dimensions - wider road for more room
-    this.roadWidth = width * 0.8;
-    this.roadLeftEdge = (width - this.roadWidth) / 2;
+  private createSkyAndHorizon(width: number, height: number): void {
+    // Sky gradient (top to horizon)
+    const skyGradient = this.add.graphics();
 
-    // Grass on left side
-    this.add.rectangle(this.roadLeftEdge / 2, height / 2, this.roadLeftEdge, height, COLORS.GRASS);
+    // Draw gradient sky
+    const skyColors = [0x87CEEB, 0xB0E0E6, 0xE0F4FF]; // Light blue gradient
+    const bandHeight = this.horizon / skyColors.length;
 
-    // Grass on right side
-    this.add.rectangle(width - this.roadLeftEdge / 2, height / 2, this.roadLeftEdge, height, COLORS.GRASS);
+    skyColors.forEach((color, i) => {
+      skyGradient.fillStyle(color, 1);
+      skyGradient.fillRect(0, i * bandHeight, width, bandHeight + 1);
+    });
 
-    // Main road
-    this.add.rectangle(width / 2, height / 2, this.roadWidth, height, COLORS.ROAD);
+    // Sun
+    const sun = this.add.circle(width * 0.75, this.horizon * 0.4, 30, 0xFFDD44);
+    sun.setAlpha(0.9);
 
-    // Road edge lines (solid white)
-    this.add.rectangle(this.roadLeftEdge + 5, height / 2, 4, height, COLORS.ROAD_LINES);
-    this.add.rectangle(this.roadLeftEdge + this.roadWidth - 5, height / 2, 4, height, COLORS.ROAD_LINES);
+    // Distant mountains/hills silhouette
+    const hills = this.add.graphics();
+    hills.fillStyle(0x6B8E6B, 1); // Muted green
+    hills.beginPath();
+    hills.moveTo(0, this.horizon);
 
-    // Create dashed center lines (these will scroll)
-    const lineWidth = 4;
-    const lineHeight = 40;
-    const lineGap = 30;
-    const totalLineHeight = lineHeight + lineGap;
+    // Rolling hills
+    const hillPoints = [
+      { x: 0, y: this.horizon },
+      { x: width * 0.15, y: this.horizon - 20 },
+      { x: width * 0.3, y: this.horizon - 35 },
+      { x: width * 0.45, y: this.horizon - 15 },
+      { x: width * 0.6, y: this.horizon - 40 },
+      { x: width * 0.75, y: this.horizon - 25 },
+      { x: width * 0.9, y: this.horizon - 30 },
+      { x: width, y: this.horizon - 10 },
+      { x: width, y: this.horizon },
+    ];
 
-    // Create enough lines to cover screen plus extra for scrolling
-    for (let y = -totalLineHeight; y < height + totalLineHeight; y += totalLineHeight) {
-      const line = this.add.rectangle(width / 2, y, lineWidth, lineHeight, COLORS.ROAD_LINES);
-      this.roadLines.push(line);
+    hillPoints.forEach(p => hills.lineTo(p.x, p.y));
+    hills.closePath();
+    hills.fill();
+
+    // Ground color (grass on sides of road)
+    const ground = this.add.graphics();
+    ground.fillStyle(0x4A7C4A, 1); // Grass green
+    ground.fillRect(0, this.horizon, width, height - this.horizon);
+  }
+
+  private createRoad(_width: number, height: number): void {
+    this.roadGraphics = this.add.graphics();
+    this.drawRoad(height);
+  }
+
+  private drawRoad(height: number): void {
+    const g = this.roadGraphics;
+    g.clear();
+
+    // Road surface (dark gray trapezoid)
+    g.fillStyle(0x333333, 1);
+    g.beginPath();
+    g.moveTo(this.vanishX - this.roadTopWidth / 2, this.horizon);
+    g.lineTo(this.vanishX + this.roadTopWidth / 2, this.horizon);
+    g.lineTo(this.vanishX + this.roadBottomWidth / 2, height);
+    g.lineTo(this.vanishX - this.roadBottomWidth / 2, height);
+    g.closePath();
+    g.fill();
+
+    // Road edge lines (white)
+    g.lineStyle(3, 0xFFFFFF, 1);
+    g.beginPath();
+    g.moveTo(this.vanishX - this.roadTopWidth / 2, this.horizon);
+    g.lineTo(this.vanishX - this.roadBottomWidth / 2, height);
+    g.stroke();
+
+    g.beginPath();
+    g.moveTo(this.vanishX + this.roadTopWidth / 2, this.horizon);
+    g.lineTo(this.vanishX + this.roadBottomWidth / 2, height);
+    g.stroke();
+
+    // Center dashed line with perspective
+    this.drawCenterLine(g, height);
+  }
+
+  private drawCenterLine(g: Phaser.GameObjects.Graphics, height: number): void {
+    const dashLength = 40;
+    const gapLength = 30;
+    const totalLength = dashLength + gapLength;
+    const roadLength = height - this.horizon;
+
+    // Offset for animation
+    const startOffset = this.roadScrollOffset % totalLength;
+
+    g.lineStyle(4, 0xFFFFFF, 1);
+
+    for (let d = -startOffset; d < roadLength; d += totalLength) {
+      if (d + dashLength < 0) continue;
+
+      const startD = Math.max(0, d);
+      const endD = Math.min(roadLength, d + dashLength);
+
+      if (startD >= endD) continue;
+
+      // Convert distance to Y position and calculate perspective X
+      const startY = this.horizon + startD;
+      const endY = this.horizon + endD;
+
+      // Lines converge at center
+      g.beginPath();
+      g.moveTo(this.vanishX, startY);
+      g.lineTo(this.vanishX, endY);
+      g.stroke();
     }
   }
 
   private createUI(width: number): void {
-    // Score display
-    this.scoreText = this.add.text(20, 20, 'SCORE: 0', {
-      fontSize: '24px',
-      color: '#ffffff',
-      fontStyle: 'bold',
-    });
+    const { height } = this.scale;
+    const uiStyle = { fontSize: '20px', color: '#ffffff', fontStyle: 'bold' };
+    const shadowStyle = { ...uiStyle, color: '#000000' };
 
-    // Coins display
-    this.coinsText = this.add.text(20, 50, 'COINS: 0', {
+    // Score with shadow
+    this.add.text(22, 22, 'SCORE: 0', shadowStyle);
+    this.scoreText = this.add.text(20, 20, 'SCORE: 0', uiStyle);
+
+    // Coins
+    this.add.text(22, 52, 'COINS: 0', { ...shadowStyle, color: '#000000', fontSize: '16px' });
+    this.coinsText = this.add.text(20, 50, 'COINS: 0', { fontSize: '16px', color: '#FFD700' });
+
+    // Cop distance
+    this.copDistanceText = this.add.text(width - 20, 20, '🚔 FAR', {
       fontSize: '18px',
-      color: '#ffd700',
-    });
-
-    // Cop distance display
-    this.copDistanceText = this.add.text(width - 20, 20, '🚔 450m', {
-      fontSize: '20px',
-      color: '#ff6666',
+      color: '#66ff66',
     }).setOrigin(1, 0);
 
-    // Oil slick counter
-    this.oilSlickText = this.add.text(width - 20, 50, `🛢️ x${OIL_SLICK_COUNT} [SPACE]`, {
+    // Oil slicks
+    this.oilSlickText = this.add.text(width - 20, 50, `🛢️ x${OIL_SLICK_COUNT}`, {
       fontSize: '16px',
       color: '#888888',
     }).setOrigin(1, 0);
 
-    // Shield indicator (hidden by default)
-    this.shieldIndicator = this.add.container(width - 20, 80);
-    const shieldIcon = this.add.circle(0, 0, 12, COLORS.SHIELD, 0.7);
-    shieldIcon.setStrokeStyle(2, 0x00ffff);
-    const shieldLabel = this.add.text(-30, -8, '🛡️', { fontSize: '16px' });
-    this.shieldIndicator.add([shieldIcon, shieldLabel]);
+    // Shield indicator
+    this.shieldIndicator = this.add.container(width - 50, 85);
+    const shieldBg = this.add.circle(0, 0, 18, 0x00ffff, 0.3);
+    const shieldText = this.add.text(0, 0, '🛡️', { fontSize: '20px' }).setOrigin(0.5);
+    this.shieldIndicator.add([shieldBg, shieldText]);
     this.shieldIndicator.setVisible(false);
 
-    // Controls hint (hidden on touch devices)
-    const controlsHint = this.add.text(width / 2, 80, 'WASD/Arrows = Move | SPACE = Oil Slick', {
-      fontSize: '12px',
-      color: '#666666',
-    }).setOrigin(0.5);
-
-    if (this.sys.game.device.input.touch) {
-      controlsHint.setVisible(false);
+    // Controls hint (desktop only)
+    if (!this.sys.game.device.input.touch) {
+      this.add.text(width / 2, height - 30, '← → Move  |  SPACE Oil Slick', {
+        fontSize: '14px',
+        color: '#ffffff',
+        backgroundColor: '#00000066',
+        padding: { x: 10, y: 5 },
+      }).setOrigin(0.5);
     }
   }
 
   private createMobileOilSlickButton(width: number, height: number): void {
-    // Only show on touch devices
     if (!this.sys.game.device.input.touch) return;
 
-    const btnX = width - 80;
-    const btnY = height - 100;
+    const btn = this.add.circle(width - 70, height - 90, 45, 0x000000, 0.5);
+    btn.setStrokeStyle(3, 0xffffff);
+    btn.setInteractive();
+    btn.setDepth(100);
 
-    const oilBtn = this.add.circle(btnX, btnY, 40, 0x1a1a1a, 0.8);
-    oilBtn.setStrokeStyle(3, 0x666666);
-    oilBtn.setInteractive({ useHandCursor: true });
-    oilBtn.setDepth(50);
+    this.add.text(width - 70, height - 90, '🛢️', { fontSize: '32px' })
+      .setOrigin(0.5).setDepth(101);
 
-    this.add.text(btnX, btnY, '🛢️', {
-      fontSize: '28px',
-    }).setOrigin(0.5).setDepth(51);
-
-    oilBtn.on('pointerdown', () => {
+    btn.on('pointerdown', () => {
       this.dropOilSlick();
-      oilBtn.setFillStyle(0x333333);
+      btn.setFillStyle(0x333333);
     });
-
-    oilBtn.on('pointerup', () => {
-      oilBtn.setFillStyle(0x1a1a1a);
-    });
+    btn.on('pointerup', () => btn.setFillStyle(0x000000, 0.5));
   }
 
   private createGameOverScreen(width: number, height: number): void {
     this.gameOverContainer = this.add.container(width / 2, height / 2);
+    this.gameOverContainer.setDepth(200);
     this.gameOverContainer.setVisible(false);
-    this.gameOverContainer.setDepth(100);
 
-    // Dark overlay
-    const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.8);
+    // Overlay
+    const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.85);
     this.gameOverContainer.add(overlay);
 
     // Game over text
-    const gameOverText = this.add.text(0, -120, 'BUSTED!', {
-      fontSize: '48px',
-      color: '#ff0000',
+    const title = this.add.text(0, -100, '🚔 BUSTED! 🚔', {
+      fontSize: '42px',
+      color: '#ff4444',
       fontStyle: 'bold',
     }).setOrigin(0.5);
-    this.gameOverContainer.add(gameOverText);
+    this.gameOverContainer.add(title);
 
-    // Final score (will be updated)
-    const finalScoreText = this.add.text(0, -50, 'Score: 0', {
-      fontSize: '32px',
+    // Stats
+    const finalScore = this.add.text(0, -30, 'Score: 0', {
+      fontSize: '28px',
       color: '#ffffff',
     }).setOrigin(0.5);
-    finalScoreText.setName('finalScore');
-    this.gameOverContainer.add(finalScoreText);
+    finalScore.setName('finalScore');
+    this.gameOverContainer.add(finalScore);
 
-    // Coins collected
-    const coinsCollectedText = this.add.text(0, -10, 'Coins: +0', {
-      fontSize: '20px',
-      color: '#ffd700',
+    const coinsText = this.add.text(0, 15, 'Coins: +0', {
+      fontSize: '22px',
+      color: '#FFD700',
     }).setOrigin(0.5);
-    coinsCollectedText.setName('coinsText');
-    this.gameOverContainer.add(coinsCollectedText);
+    coinsText.setName('coinsText');
+    this.gameOverContainer.add(coinsText);
 
-    // Time survived
-    const timeText = this.add.text(0, 30, 'Time: 0.00s', {
-      fontSize: '20px',
+    const timeText = this.add.text(0, 50, 'Time: 0.0s', {
+      fontSize: '18px',
       color: '#aaaaaa',
     }).setOrigin(0.5);
     timeText.setName('timeText');
     this.gameOverContainer.add(timeText);
 
     // Restart button
-    const restartBtn = this.add.rectangle(0, 110, 200, 50, 0x4a90d9);
-    restartBtn.setStrokeStyle(2, 0xffffff);
-    restartBtn.setInteractive({ useHandCursor: true });
-    restartBtn.on('pointerover', () => restartBtn.setFillStyle(0x6ab0f9));
-    restartBtn.on('pointerout', () => restartBtn.setFillStyle(0x4a90d9));
-    restartBtn.on('pointerdown', () => this.restartGame());
-    this.gameOverContainer.add(restartBtn);
+    const btn = this.add.rectangle(0, 120, 180, 50, 0x4a90d9);
+    btn.setStrokeStyle(2, 0xffffff);
+    btn.setInteractive({ useHandCursor: true });
+    btn.on('pointerover', () => btn.setFillStyle(0x6ab0f9));
+    btn.on('pointerout', () => btn.setFillStyle(0x4a90d9));
+    btn.on('pointerdown', () => this.scene.restart());
+    this.gameOverContainer.add(btn);
 
-    const restartText = this.add.text(0, 110, 'PLAY AGAIN', {
+    const btnText = this.add.text(0, 120, '▶ RETRY', {
       fontSize: '20px',
       color: '#ffffff',
       fontStyle: 'bold',
     }).setOrigin(0.5);
-    this.gameOverContainer.add(restartText);
+    this.gameOverContainer.add(btnText);
   }
 
   update(_time: number, delta: number): void {
     if (this.isGameOver) return;
 
-    // Update game time and score
+    const { height } = this.scale;
+
+    // Update time/score
     this.gameTime += delta;
     this.score = Math.floor(this.gameTime);
-
-    // Update UI
     this.scoreText.setText(`SCORE: ${this.score.toLocaleString()}`);
 
-    // Calculate cop distance and update display
-    const copDistance = Math.floor(this.cop.distanceTo(this.player.x, this.player.y));
-    this.copDistanceText.setText(`🚔 ${copDistance}m behind`);
+    // Scroll road
+    this.roadScrollOffset += (this.roadScrollSpeed * delta) / 1000;
+    this.drawRoad(height);
 
-    // Color code distance
-    if (copDistance < 100) {
-      this.copDistanceText.setColor('#ff0000');
-    } else if (copDistance < 200) {
-      this.copDistanceText.setColor('#ffaa00');
-    } else {
-      this.copDistanceText.setColor('#66ff66');
-    }
-
-    // Scroll road lines
-    this.scrollRoad(delta);
-
-    // Spawn collectibles (more frequently now)
+    // Spawn collectibles
     this.spawnTimer += delta;
     if (this.spawnTimer >= COLLECTIBLE_SPAWN_INTERVAL) {
       this.spawnTimer = 0;
@@ -308,163 +369,171 @@ export class PlayScene extends Phaser.Scene {
       this.spawnObstacle();
     }
 
-    // Update collectibles (scroll and check collection)
+    // Update game objects with perspective
     this.updateCollectibles(delta);
-
-    // Update obstacles (scroll and check collision)
     this.updateObstacles(delta);
-
-    // Update oil slicks (scroll and check if cop hits)
     this.updateOilSlicks(delta);
 
-    // Update player (pass joystick input)
+    // Update player
     this.player.update(this.joystick.getForceX(), this.joystick.getForceY());
+    this.constrainToRoad(this.player, height);
 
-    // Update cop
-    this.cop.update(delta, this.player.x, this.player.y, this.gameTime);
+    // Update cop (chase player)
+    this.updateCop(delta);
 
-    // Check if cop caught player
-    if (copDistance < CATCH_DISTANCE) {
-      this.onCopCatchesPlayer();
+    // Check catch
+    const copDist = this.cop.distanceTo(this.player.x, this.player.y);
+    this.updateCopDistanceUI(copDist);
+
+    if (copDist < CATCH_DISTANCE) {
+      this.onCaught();
     }
   }
 
-  private scrollRoad(delta: number): void {
-    const scrollAmount = (this.roadScrollSpeed * delta) / 1000;
-    const lineHeight = 40;
-    const lineGap = 30;
-    const totalHeight = lineHeight + lineGap;
+  private constrainToRoad(obj: Phaser.GameObjects.Container, height: number): void {
+    // Calculate road edges at object's Y position
+    const t = (obj.y - this.horizon) / (height - this.horizon);
+    const roadWidth = Phaser.Math.Linear(this.roadTopWidth, this.roadBottomWidth, t);
+    const leftEdge = this.vanishX - roadWidth / 2 + 40;
+    const rightEdge = this.vanishX + roadWidth / 2 - 40;
 
-    for (const line of this.roadLines) {
-      line.y += scrollAmount;
+    obj.x = Phaser.Math.Clamp(obj.x, leftEdge, rightEdge);
+  }
 
-      // Reset line to top when it goes off screen
-      if (line.y > this.scale.height + lineHeight) {
-        line.y -= this.roadLines.length * totalHeight;
-      }
-    }
+  private getScaleForY(y: number, height: number): number {
+    // Scale from 0.3 at horizon to 1.2 at bottom
+    const t = (y - this.horizon) / (height - this.horizon);
+    return Phaser.Math.Linear(0.3, 1.2, Math.max(0, Math.min(1, t)));
+  }
+
+  private getSpeedMultiplierForY(y: number, height: number): number {
+    // Objects accelerate as they approach (perspective effect)
+    const t = (y - this.horizon) / (height - this.horizon);
+    return Phaser.Math.Linear(0.5, 2.0, Math.max(0, Math.min(1, t)));
+  }
+
+  private getRoadXForY(normalizedX: number, y: number, height: number): number {
+    // Convert a normalized X (-1 to 1) to actual X based on road width at Y
+    const t = (y - this.horizon) / (height - this.horizon);
+    const roadWidth = Phaser.Math.Linear(this.roadTopWidth, this.roadBottomWidth, t);
+    return this.vanishX + normalizedX * (roadWidth / 2 - 30);
   }
 
   private spawnCollectible(): void {
-    // Random position on road
-    const margin = 50;
-    const x = Phaser.Math.Between(
-      this.roadLeftEdge + margin,
-      this.roadLeftEdge + this.roadWidth - margin
-    );
+    const { height } = this.scale;
 
-    // Spawn above screen
-    const y = -30;
+    // Random lane position (-0.7 to 0.7)
+    const laneX = Phaser.Math.FloatBetween(-0.7, 0.7);
 
-    // Random type - more boosts and shields now (40% coins, 35% boost, 25% shield)
+    // Spawn at horizon
+    const spawnY = this.horizon + 10;
+    const actualX = this.getRoadXForY(laneX, spawnY, height);
+
+    // Random type
     const rand = Math.random();
     let type: CollectibleType;
-    if (rand < 0.40) {
-      type = 'coin';
-    } else if (rand < 0.75) {
-      type = 'boost';
-    } else {
-      type = 'shield';
-    }
+    if (rand < 0.45) type = 'coin';
+    else if (rand < 0.75) type = 'boost';
+    else type = 'shield';
 
-    const collectible = new Collectible(this, x, y, type);
-    this.collectibles.push(collectible);
+    const c = new Collectible(this, actualX, spawnY, type);
+    c.setScale(this.getScaleForY(spawnY, height));
+    c.setData('laneX', laneX);
+    this.collectibles.push(c);
   }
 
   private updateCollectibles(delta: number): void {
-    const scrollAmount = (this.roadScrollSpeed * delta) / 1000;
+    const { height } = this.scale;
+    const baseSpeed = (this.roadScrollSpeed * delta) / 1000;
 
     for (let i = this.collectibles.length - 1; i >= 0; i--) {
-      const collectible = this.collectibles[i];
+      const c = this.collectibles[i];
 
-      // Scroll down
-      collectible.y += scrollAmount;
+      // Move with perspective acceleration
+      const speedMult = this.getSpeedMultiplierForY(c.y, height);
+      c.y += baseSpeed * speedMult;
 
-      // Check if collected by player
-      const dist = Phaser.Math.Distance.Between(
-        this.player.x, this.player.y,
-        collectible.x, collectible.y
-      );
+      // Update scale based on Y
+      c.setScale(this.getScaleForY(c.y, height));
 
-      if (dist < 45) {
-        this.onCollect(collectible);
+      // Update X to follow road perspective
+      const laneX = c.getData('laneX') as number;
+      c.x = this.getRoadXForY(laneX, c.y, height);
+
+      // Check collection
+      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, c.x, c.y);
+      if (dist < 50) {
+        this.onCollect(c);
         this.collectibles.splice(i, 1);
         continue;
       }
 
-      // Remove if off screen
-      if (collectible.y > this.scale.height + 50) {
-        collectible.destroy();
+      // Remove if past bottom
+      if (c.y > height + 50) {
+        c.destroy();
         this.collectibles.splice(i, 1);
       }
     }
   }
 
-  private onCollect(collectible: Collectible): void {
-    switch (collectible.collectibleType) {
+  private onCollect(c: Collectible): void {
+    switch (c.collectibleType) {
       case 'coin':
         this.coins++;
         this.coinsText.setText(`COINS: ${this.coins}`);
         break;
-
       case 'boost':
-        this.player.applyBoost(2.5, 2500); // 2.5x speed for 2.5 seconds
-        // Push cop back more
-        this.cop.y += 150;
+        this.player.applyBoost(2.5, 2500);
+        // Push cop back
+        this.cop.y += 80;
         break;
-
       case 'shield':
         this.hasShield = true;
         this.shieldIndicator.setVisible(true);
         break;
     }
-
-    collectible.collect();
+    c.collect();
   }
 
   private spawnObstacle(): void {
-    // Random position on road
-    const margin = 60;
-    const x = Phaser.Math.Between(
-      this.roadLeftEdge + margin,
-      this.roadLeftEdge + this.roadWidth - margin
-    );
+    const { height } = this.scale;
 
-    // Spawn above screen
-    const y = -30;
+    const laneX = Phaser.Math.FloatBetween(-0.6, 0.6);
+    const spawnY = this.horizon + 10;
+    const actualX = this.getRoadXForY(laneX, spawnY, height);
 
-    // Random type
     const types: ObstacleType[] = ['pothole', 'cone', 'puddle'];
-    const type = types[Phaser.Math.Between(0, types.length - 1)];
+    const type = types[Phaser.Math.Between(0, 2)];
 
-    const obstacle = new Obstacle(this, x, y, type);
-    this.obstacles.push(obstacle);
+    const o = new Obstacle(this, actualX, spawnY, type);
+    o.setScale(this.getScaleForY(spawnY, height));
+    o.setData('laneX', laneX);
+    this.obstacles.push(o);
   }
 
   private updateObstacles(delta: number): void {
-    const scrollAmount = (this.roadScrollSpeed * delta) / 1000;
+    const { height } = this.scale;
+    const baseSpeed = (this.roadScrollSpeed * delta) / 1000;
 
     for (let i = this.obstacles.length - 1; i >= 0; i--) {
-      const obstacle = this.obstacles[i];
+      const o = this.obstacles[i];
 
-      // Scroll down
-      obstacle.y += scrollAmount;
+      const speedMult = this.getSpeedMultiplierForY(o.y, height);
+      o.y += baseSpeed * speedMult;
+      o.setScale(this.getScaleForY(o.y, height));
 
-      // Check if player hits obstacle
-      const dist = Phaser.Math.Distance.Between(
-        this.player.x, this.player.y,
-        obstacle.x, obstacle.y
-      );
+      const laneX = o.getData('laneX') as number;
+      o.x = this.getRoadXForY(laneX, o.y, height);
 
-      if (dist < 35 && !this.player.isSlowed && !this.player.isBoosting) {
-        // Player hit obstacle - slow them down!
-        this.player.applySlowdown(obstacle.slowdownAmount, obstacle.slowdownDuration);
-        obstacle.onHit();
+      // Check collision
+      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, o.x, o.y);
+      if (dist < 45 && !this.player.isSlowed && !this.player.isBoosting) {
+        this.player.applySlowdown(o.slowdownAmount, o.slowdownDuration);
+        o.onHit();
       }
 
-      // Remove if off screen
-      if (obstacle.y > this.scale.height + 50) {
-        obstacle.destroy();
+      if (o.y > height + 50) {
+        o.destroy();
         this.obstacles.splice(i, 1);
       }
     }
@@ -474,92 +543,113 @@ export class PlayScene extends Phaser.Scene {
     if (this.oilSlicksRemaining <= 0 || this.isGameOver) return;
 
     this.oilSlicksRemaining--;
-    this.oilSlickText.setText(`🛢️ x${this.oilSlicksRemaining} [SPACE]`);
+    this.oilSlickText.setText(`🛢️ x${this.oilSlicksRemaining}`);
 
-    // Create oil slick at player position
-    const oil = this.add.ellipse(
-      this.player.x,
-      this.player.y + 40,
-      60, 30,
-      COLORS.OIL, 0.8
-    );
-    oil.setStrokeStyle(2, 0x333333);
+    const graphic = this.add.ellipse(this.player.x, this.player.y + 30, 50, 25, 0x111111, 0.9);
+    graphic.setStrokeStyle(2, 0x333333);
 
-    this.oilSlicks.push(oil);
+    this.oilSlicks.push({
+      x: this.player.x,
+      y: this.player.y + 30,
+      graphic,
+    });
   }
 
   private updateOilSlicks(delta: number): void {
-    const scrollAmount = (this.roadScrollSpeed * delta) / 1000;
+    const { height } = this.scale;
+    const baseSpeed = (this.roadScrollSpeed * delta) / 1000;
 
     for (let i = this.oilSlicks.length - 1; i >= 0; i--) {
       const oil = this.oilSlicks[i];
 
-      // Scroll down with road
-      oil.y += scrollAmount;
+      // Oil slicks stay relative to road (scroll down)
+      const speedMult = this.getSpeedMultiplierForY(oil.y, height);
+      oil.y += baseSpeed * speedMult;
+      oil.graphic.y = oil.y;
 
-      // Check if cop hits oil slick
-      const dist = Phaser.Math.Distance.Between(
-        this.cop.x, this.cop.y,
-        oil.x, oil.y
-      );
+      // Scale with perspective
+      const scale = this.getScaleForY(oil.y, height);
+      oil.graphic.setScale(scale);
 
-      if (dist < 50 && !this.cop.isStunned) {
-        this.cop.stun(OIL_SLICK_STUN_DURATION); // 4 seconds stun now!
-        // Remove oil slick
-        oil.destroy();
+      // Check if cop hits it
+      const copDist = Phaser.Math.Distance.Between(this.cop.x, this.cop.y, oil.x, oil.y);
+      if (copDist < 50 && !this.cop.isStunned) {
+        this.cop.stun(OIL_SLICK_STUN_DURATION);
+        oil.graphic.destroy();
         this.oilSlicks.splice(i, 1);
         continue;
       }
 
-      // Remove if way off screen
-      if (oil.y > this.scale.height + 100) {
-        oil.destroy();
+      if (oil.y > height + 100) {
+        oil.graphic.destroy();
         this.oilSlicks.splice(i, 1);
       }
     }
   }
 
-  private onCopCatchesPlayer(): void {
+  private updateCop(delta: number): void {
+    const { height } = this.scale;
+
+    // Cop chases player
+    this.cop.update(delta, this.player.x, this.player.y, this.gameTime);
+
+    // Constrain cop to road
+    this.constrainToRoad(this.cop, height);
+
+    // Scale cop based on Y
+    this.cop.setScale(this.getScaleForY(this.cop.y, height));
+
+    // Keep cop at bottom portion of screen when not stunned
+    if (!this.cop.isStunned) {
+      // Cop tries to stay close behind player
+      const targetY = Math.min(height + 20, this.player.y + STARTING_DISTANCE * 0.3);
+      this.cop.y = Phaser.Math.Linear(this.cop.y, targetY, 0.02);
+    }
+  }
+
+  private updateCopDistanceUI(dist: number): void {
+    let status: string;
+    let color: string;
+
+    if (dist < 80) {
+      status = '🚔 DANGER!';
+      color = '#ff0000';
+    } else if (dist < 150) {
+      status = '🚔 CLOSE!';
+      color = '#ffaa00';
+    } else {
+      status = '🚔 FAR';
+      color = '#66ff66';
+    }
+
+    this.copDistanceText.setText(status);
+    this.copDistanceText.setColor(color);
+  }
+
+  private onCaught(): void {
     if (this.isGameOver) return;
 
-    // If player has shield, consume it instead of game over
     if (this.hasShield) {
       this.hasShield = false;
       this.shieldIndicator.setVisible(false);
-      // Push cop back more
-      this.cop.y += 200;
+      this.cop.y += 120;
       return;
     }
 
     this.isGameOver = true;
-
-    // Stop all movement
     this.player.getBody().setVelocity(0);
     this.cop.getBody().setVelocity(0);
 
-    // Update game over screen with final stats
-    const finalScoreText = this.gameOverContainer.getByName('finalScore') as Phaser.GameObjects.Text;
-    if (finalScoreText) {
-      finalScoreText.setText(`Score: ${this.score.toLocaleString()}`);
-    }
+    // Update game over screen
+    const finalScore = this.gameOverContainer.getByName('finalScore') as Phaser.GameObjects.Text;
+    finalScore?.setText(`Score: ${this.score.toLocaleString()}`);
 
     const coinsText = this.gameOverContainer.getByName('coinsText') as Phaser.GameObjects.Text;
-    if (coinsText) {
-      coinsText.setText(`Coins: +${this.coins}`);
-    }
+    coinsText?.setText(`Coins: +${this.coins}`);
 
     const timeText = this.gameOverContainer.getByName('timeText') as Phaser.GameObjects.Text;
-    if (timeText) {
-      timeText.setText(`Time: ${(this.gameTime / 1000).toFixed(2)}s`);
-    }
+    timeText?.setText(`Time: ${(this.gameTime / 1000).toFixed(1)}s`);
 
-    // Show game over screen
     this.gameOverContainer.setVisible(true);
-
-    console.log(`Game Over! Final score: ${this.score}, Coins: ${this.coins}`);
-  }
-
-  private restartGame(): void {
-    this.scene.restart();
   }
 }
