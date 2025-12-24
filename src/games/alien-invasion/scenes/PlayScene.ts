@@ -377,28 +377,24 @@ export class PlayScene extends Phaser.Scene {
 
     // Check for mobile controls first
     if (this.mobileControls.isActive()) {
-      // Mobile: Use joystick for movement
+      // Mobile: Joystick for movement + turning
       const forward = this.mobileControls.moveForward;
-      const strafe = this.mobileControls.moveStrafe;
+      const turn = this.mobileControls.turnAmount;
 
       // Forward/backward movement
-      if (Math.abs(forward) > 0.1) {
+      if (Math.abs(forward) > 0.15) {
         moveX += Math.cos(this.playerAngle) * PLAYER_SPEED * forward;
         moveY += Math.sin(this.playerAngle) * PLAYER_SPEED * forward;
       }
 
-      // Strafe movement
-      if (Math.abs(strafe) > 0.1) {
-        moveX += Math.cos(this.playerAngle + Math.PI / 2) * PLAYER_SPEED * strafe;
-        moveY += Math.sin(this.playerAngle + Math.PI / 2) * PLAYER_SPEED * strafe;
+      // Turning (joystick left/right = turn)
+      if (Math.abs(turn) > 0.15) {
+        this.playerAngle += turn * PLAYER_ROT_SPEED * 1.5;
       }
 
-      // Turn from swipe
-      this.playerAngle += this.mobileControls.turnDelta;
-
-      // Check shoot
-      if (this.mobileControls.shouldShoot) {
-        this.shoot();
+      // Check shoot - auto-aim at closest visible alien
+      if (this.mobileControls.shootRequested) {
+        this.shootWithAutoAim();
       }
 
       // Reset frame-specific values
@@ -443,6 +439,95 @@ export class PlayScene extends Phaser.Scene {
     }
     if (!this.isWall(this.playerX, newY)) {
       this.playerY = newY;
+    }
+  }
+
+  /**
+   * Mobile auto-aim: Shoots the closest visible alien
+   */
+  private shootWithAutoAim(): void {
+    const now = this.time.now;
+    const weapon = this.weapons[this.currentWeaponIndex];
+
+    if (now - this.lastFireTime < weapon.fireRate) return;
+
+    this.lastFireTime = now;
+
+    // Find closest visible alien
+    let closestAlien: Alien | null = null;
+    let closestDist = Infinity;
+
+    for (const alien of this.aliens) {
+      if (alien.visible && alien.distance < closestDist) {
+        closestDist = alien.distance;
+        closestAlien = alien;
+      }
+    }
+
+    // Muzzle flash
+    const { width, height } = this.scale;
+    const flash = this.add.circle(width / 2, height - 100, 35, 0xffff00, 0.9);
+    flash.setDepth(55);
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      scale: 2.5,
+      duration: 80,
+      onComplete: () => flash.destroy(),
+    });
+
+    if (closestAlien) {
+      // HIT! Apply damage
+      closestAlien.health -= weapon.damage;
+
+      // Show hit marker at alien's screen position
+      const hitMarker = this.add.text(closestAlien.screenX, height * 0.4, '✖', {
+        fontSize: '32px',
+        color: '#ff0000',
+      }).setOrigin(0.5).setDepth(60);
+
+      this.tweens.add({
+        targets: hitMarker,
+        y: hitMarker.y - 30,
+        alpha: 0,
+        scale: 1.5,
+        duration: 300,
+        onComplete: () => hitMarker.destroy(),
+      });
+
+      // Damage number
+      const dmgText = this.add.text(closestAlien.screenX, height * 0.35, `-${weapon.damage}`, {
+        fontSize: '20px',
+        color: '#ffff00',
+        fontStyle: 'bold',
+      }).setOrigin(0.5).setDepth(60);
+
+      this.tweens.add({
+        targets: dmgText,
+        y: dmgText.y - 40,
+        alpha: 0,
+        duration: 500,
+        onComplete: () => dmgText.destroy(),
+      });
+
+      // Check if killed
+      if (closestAlien.health <= 0) {
+        this.onAlienKilled(closestAlien);
+      }
+    } else {
+      // Miss - show miss indicator
+      const missText = this.add.text(width / 2, height / 2, 'MISS', {
+        fontSize: '18px',
+        color: '#888888',
+      }).setOrigin(0.5).setDepth(60);
+
+      this.tweens.add({
+        targets: missText,
+        y: missText.y - 20,
+        alpha: 0,
+        duration: 400,
+        onComplete: () => missText.destroy(),
+      });
     }
   }
 

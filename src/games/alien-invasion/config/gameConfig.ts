@@ -46,15 +46,15 @@ export const WEAPONS = {
 } as const;
 
 // Enemies
-export const ALIEN_HEALTH = 30;
-export const ALIEN_DAMAGE = 10;
-export const ALIEN_SPEED = 1.5;
+export const ALIEN_HEALTH = 25;
+export const ALIEN_DAMAGE = 8;
+export const ALIEN_SPEED = 0.6;  // Much slower for playability
 
-export const BOSS_HEALTH = 200;
-export const BOSS_DAMAGE = 25;
+export const BOSS_HEALTH = 150;
+export const BOSS_DAMAGE = 15;
 
 // Waves
-export const ALIENS_PER_WAVE = 5;
+export const ALIENS_PER_WAVE = 3;  // Start with fewer aliens
 export const WAVES_BEFORE_BOSS = 3;
 
 // Colors
