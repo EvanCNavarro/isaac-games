@@ -39,6 +39,17 @@ interface Weapon {
   maxAmmo: number;
 }
 
+interface WeaponPickup {
+  x: number;
+  y: number;
+  weapon: Weapon;
+  angle: number;
+  distance: number;
+  screenX: number;
+  visible: boolean;
+  bobOffset: number;
+}
+
 /**
  * Alien Invasion Play Scene
  * DOOM-style first person shooter with raycasting
@@ -77,6 +88,13 @@ export class PlayScene extends Phaser.Scene {
   private survivors: number = 0;
   private aliensKilledThisWave: number = 0;
 
+  // Portal spawn location (top-right corner)
+  private portalX: number = 0;
+  private portalY: number = 0;
+
+  // Weapon pickups on the ground
+  private weaponPickups: WeaponPickup[] = [];
+
   // Graphics
   private gameGraphics!: Phaser.GameObjects.Graphics;
   private rayDistances: number[] = [];
@@ -107,9 +125,9 @@ export class PlayScene extends Phaser.Scene {
     const { width, height } = this.scale;
 
     // Reset state
-    this.playerX = TILE_SIZE * 5.5;
-    this.playerY = TILE_SIZE * 5.5;
-    this.playerAngle = 0;
+    this.playerX = TILE_SIZE * 2.5;  // Start in bottom-left area
+    this.playerY = TILE_SIZE * 9.5;
+    this.playerAngle = -Math.PI / 4;  // Face towards center/portal
     this.playerHealth = PLAYER_MAX_HEALTH;
     this.wave = 1;
     this.survivors = 0;
@@ -117,13 +135,21 @@ export class PlayScene extends Phaser.Scene {
     this.isGameOver = false;
     this.aliens = [];
     this.rayDistances = [];
+    this.weaponPickups = [];
 
-    // Initialize weapons
+    // Portal location (top-right corner)
+    this.portalX = TILE_SIZE * 9.5;
+    this.portalY = TILE_SIZE * 1.5;
+
+    // Initialize weapons (start with pistol only)
     this.weapons = [
       { name: 'Pistol', emoji: '🔫', damage: 20, fireRate: 400, ammo: Infinity, maxAmmo: Infinity },
     ];
     this.currentWeaponIndex = 0;
     this.lastFireTime = 0;
+
+    // Spawn initial weapon pickups around the map
+    this.spawnWeaponPickups();
 
     // Create graphics object for raycasting
     this.gameGraphics = this.add.graphics();
@@ -306,22 +332,30 @@ export class PlayScene extends Phaser.Scene {
       onComplete: () => waveAnnounce.destroy(),
     });
 
-    // Spawn aliens at random positions (not too close to player)
+    // Show portal warning
+    const portalWarning = this.add.text(width / 2, height / 2 + 40,
+      '🌀 PORTAL OPENING... 🌀', {
+      fontSize: '16px',
+      color: '#aa44ff',
+    }).setOrigin(0.5).setDepth(60);
+
+    this.tweens.add({
+      targets: portalWarning,
+      alpha: 0,
+      duration: 2000,
+      onComplete: () => portalWarning.destroy(),
+    });
+
+    // Spawn aliens from the portal (top-right corner) with slight spread
     for (let i = 0; i < alienCount; i++) {
-      let x, y, attempts = 0;
-      do {
-        x = Phaser.Math.Between(2, this.map[0].length - 3) * TILE_SIZE + TILE_SIZE / 2;
-        y = Phaser.Math.Between(2, this.map.length - 3) * TILE_SIZE + TILE_SIZE / 2;
-        attempts++;
-      } while (
-        (this.isWall(x, y) || this.distanceToPlayer(x, y) < TILE_SIZE * 3) &&
-        attempts < 50
-      );
+      // Stagger spawn with slight delay effect (spread around portal)
+      const offsetX = Phaser.Math.Between(-30, 30);
+      const offsetY = Phaser.Math.Between(-30, 30);
 
       const isBoss = isBossWave;
       this.aliens.push({
-        x,
-        y,
+        x: this.portalX + offsetX,
+        y: this.portalY + offsetY,
         health: isBoss ? BOSS_HEALTH : ALIEN_HEALTH,
         maxHealth: isBoss ? BOSS_HEALTH : ALIEN_HEALTH,
         isBoss,
@@ -334,6 +368,38 @@ export class PlayScene extends Phaser.Scene {
 
     this.waveText.setText(isBossWave ? '⚠️ BOSS' : `WAVE ${this.wave}`);
     this.aliensKilledThisWave = 0;
+  }
+
+  private spawnWeaponPickups(): void {
+    // Define weapon pickup locations around the map
+    const pickupLocations = [
+      { x: 5.5, y: 2.5 },   // Top center
+      { x: 1.5, y: 5.5 },   // Left middle
+      { x: 9.5, y: 5.5 },   // Right middle
+      { x: 5.5, y: 9.5 },   // Bottom center
+    ];
+
+    // Available weapons to spawn
+    const weaponTypes: Weapon[] = [
+      { name: 'Shotgun', emoji: '🔫', damage: 45, fireRate: 600, ammo: 12, maxAmmo: 12 },
+      { name: 'Plasma', emoji: '⚡', damage: 35, fireRate: 150, ammo: 40, maxAmmo: 40 },
+      { name: 'Rocket', emoji: '🚀', damage: 80, fireRate: 1000, ammo: 6, maxAmmo: 6 },
+    ];
+
+    // Spawn weapons at locations
+    pickupLocations.forEach((loc, index) => {
+      const weapon = weaponTypes[index % weaponTypes.length];
+      this.weaponPickups.push({
+        x: loc.x * TILE_SIZE,
+        y: loc.y * TILE_SIZE,
+        weapon: { ...weapon },  // Clone weapon
+        angle: 0,
+        distance: 0,
+        screenX: 0,
+        visible: false,
+        bobOffset: Math.random() * Math.PI * 2,  // Random start phase for bobbing
+      });
+    });
   }
 
   private distanceToPlayer(x: number, y: number): number {
@@ -349,7 +415,7 @@ export class PlayScene extends Phaser.Scene {
     return this.map[mapY][mapX] === 1;
   }
 
-  update(_time: number, _delta: number): void {
+  update(time: number, _delta: number): void {
     if (this.isGameOver) return;
 
     // Handle input
@@ -358,8 +424,17 @@ export class PlayScene extends Phaser.Scene {
     // Update aliens
     this.updateAliens();
 
+    // Update weapon pickups (check collection)
+    this.updateWeaponPickups(time);
+
     // Render the 3D view
     this.render3D();
+
+    // Render portal
+    this.renderPortal(time);
+
+    // Render weapon pickups
+    this.renderWeaponPickups(time);
 
     // Render aliens on top
     this.renderAliens();
@@ -368,6 +443,166 @@ export class PlayScene extends Phaser.Scene {
     if (this.aliens.length === 0) {
       this.wave++;
       this.time.delayedCall(1000, () => this.spawnWave());
+    }
+  }
+
+  private updateWeaponPickups(_time: number): void {
+    const pickupRadius = TILE_SIZE * 0.6;
+
+    for (let i = this.weaponPickups.length - 1; i >= 0; i--) {
+      const pickup = this.weaponPickups[i];
+
+      // Calculate distance to player
+      const dist = this.distanceToPlayer(pickup.x, pickup.y);
+
+      // Check if player is close enough to collect
+      if (dist < pickupRadius) {
+        this.collectWeapon(pickup);
+        this.weaponPickups.splice(i, 1);
+      }
+    }
+  }
+
+  private collectWeapon(pickup: WeaponPickup): void {
+    // Add weapon to inventory
+    this.weapons.push(pickup.weapon);
+    this.currentWeaponIndex = this.weapons.length - 1;
+
+    // Update UI
+    const weapon = pickup.weapon;
+    this.weaponText.setText(`${weapon.emoji} ${weapon.name}`);
+    this.ammoText.setText(`${weapon.emoji} ${weapon.ammo}`);
+
+    // Show pickup message
+    const { width, height } = this.scale;
+    const msg = this.add.text(width / 2, height * 0.3,
+      `⬆️ ${weapon.name.toUpperCase()} ⬆️`, {
+      fontSize: '24px',
+      color: '#ffff00',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(70);
+
+    this.tweens.add({
+      targets: msg,
+      y: msg.y - 50,
+      alpha: 0,
+      scale: 1.3,
+      duration: 1500,
+      onComplete: () => msg.destroy(),
+    });
+  }
+
+  private renderPortal(time: number): void {
+    const { width, height } = this.scale;
+
+    // Calculate portal position relative to player
+    const dx = this.portalX - this.playerX;
+    const dy = this.portalY - this.playerY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const angle = Math.atan2(dy, dx);
+
+    // Calculate relative angle to player view
+    let relativeAngle = angle - this.playerAngle;
+    while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+    while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+
+    // Check if in FOV
+    if (Math.abs(relativeAngle) > FOV / 2 + 0.3) return;
+
+    // Check if behind wall
+    const screenX = width / 2 + (relativeAngle / FOV) * width;
+    const rayIndex = Math.floor((screenX / width) * NUM_RAYS);
+    if (rayIndex >= 0 && rayIndex < this.rayDistances.length) {
+      if (dist > this.rayDistances[rayIndex]) return;
+    }
+
+    // Draw portal (swirling effect)
+    const portalSize = Math.min((TILE_SIZE * height * 1.2) / dist, height * 0.5);
+    const portalY = height / 2;
+
+    // Swirling colors
+    const pulse = Math.sin(time * 0.005) * 0.3 + 0.7;
+    const colors = [0x8800ff, 0xaa22ff, 0x6600cc];
+    const colorIndex = Math.floor((time * 0.003) % colors.length);
+
+    this.gameGraphics.fillStyle(colors[colorIndex], pulse * 0.6);
+    this.gameGraphics.fillCircle(screenX, portalY, portalSize * 0.5);
+
+    this.gameGraphics.fillStyle(0xffffff, pulse * 0.3);
+    this.gameGraphics.fillCircle(screenX, portalY, portalSize * 0.3);
+
+    // Inner swirl
+    this.gameGraphics.fillStyle(0x000000, 0.8);
+    this.gameGraphics.fillCircle(screenX, portalY, portalSize * 0.15);
+  }
+
+  private renderWeaponPickups(time: number): void {
+    const { width, height } = this.scale;
+
+    for (const pickup of this.weaponPickups) {
+      // Calculate position relative to player
+      const dx = pickup.x - this.playerX;
+      const dy = pickup.y - this.playerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx);
+
+      // Calculate relative angle to player view
+      let relativeAngle = angle - this.playerAngle;
+      while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+      while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+
+      // Check if in FOV
+      if (Math.abs(relativeAngle) > FOV / 2 + 0.2) {
+        pickup.visible = false;
+        continue;
+      }
+
+      // Calculate screen position
+      pickup.screenX = width / 2 + (relativeAngle / FOV) * width;
+      pickup.distance = dist;
+
+      // Check if behind wall
+      const rayIndex = Math.floor((pickup.screenX / width) * NUM_RAYS);
+      if (rayIndex >= 0 && rayIndex < this.rayDistances.length) {
+        if (dist > this.rayDistances[rayIndex]) {
+          pickup.visible = false;
+          continue;
+        }
+      }
+
+      pickup.visible = true;
+
+      // Calculate size and position
+      const pickupSize = Math.min((TILE_SIZE * height * 0.8) / dist, height * 0.3);
+      const bobAmount = Math.sin(time * 0.004 + pickup.bobOffset) * 10;
+      const pickupY = height / 2 + pickupSize * 0.3 + bobAmount;
+
+      // Draw glowing pickup box
+      const glowPulse = Math.sin(time * 0.006) * 0.3 + 0.7;
+
+      // Outer glow
+      this.gameGraphics.fillStyle(0xffff00, glowPulse * 0.3);
+      this.gameGraphics.fillCircle(pickup.screenX, pickupY, pickupSize * 0.6);
+
+      // Box
+      this.gameGraphics.fillStyle(0x444400, 0.9);
+      this.gameGraphics.fillRect(
+        pickup.screenX - pickupSize * 0.3,
+        pickupY - pickupSize * 0.2,
+        pickupSize * 0.6,
+        pickupSize * 0.4
+      );
+
+      // Weapon icon highlight
+      this.gameGraphics.fillStyle(0xffff00, 0.8);
+      this.gameGraphics.fillRect(
+        pickup.screenX - pickupSize * 0.25,
+        pickupY - pickupSize * 0.15,
+        pickupSize * 0.5,
+        pickupSize * 0.3
+      );
     }
   }
 
