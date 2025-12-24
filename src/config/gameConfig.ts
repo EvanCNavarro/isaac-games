@@ -3,18 +3,26 @@
  * ELI5: These are the "rules" of our game world - how big it is, how gravity works, etc.
  */
 
-// Game dimensions - we'll scale to fit screen
-export const GAME_WIDTH = 480;
-export const GAME_HEIGHT = 800;
+// Game dimensions - wider for better landscape support, will scale to fit
+export const GAME_WIDTH = 600;
+export const GAME_HEIGHT = 900;
 
 // Physics constants
-export const PLAYER_SPEED = 200;
-export const COP_SPEED = 180; // Slightly slower so player can escape
-export const COP_ACCELERATION = 0.5; // Cop gets faster over time
+export const PLAYER_SPEED = 220;
+export const COP_SPEED = 140; // Much slower so player can actually escape
+export const COP_ACCELERATION = 0.3; // Cop gets faster over time (slower ramp)
 
 // Gameplay
-export const STARTING_DISTANCE = 300; // Pixels between player and cop at start
+export const STARTING_DISTANCE = 450; // More breathing room at start
 export const CATCH_DISTANCE = 30; // How close cop needs to be to catch player
+
+// Oil slick settings
+export const OIL_SLICK_COUNT = 4; // Start with 4 oil slicks
+export const OIL_SLICK_STUN_DURATION = 4000; // 4 seconds stun
+
+// Spawn rates (lower = more frequent)
+export const COLLECTIBLE_SPAWN_INTERVAL = 800; // Spawn collectibles more often
+export const OBSTACLE_SPAWN_INTERVAL = 2500; // Obstacles spawn rate
 
 // Colors (for placeholder graphics)
 export const COLORS = {

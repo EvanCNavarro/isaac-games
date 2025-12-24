@@ -14,15 +14,23 @@ const config: Phaser.Types.Core.GameConfig = {
   parent: 'game-container',
   backgroundColor: '#1a1a2e',
 
-  // Scale manager for responsive sizing (mobile-first!)
+  // Scale manager for responsive sizing - RESIZE mode for full screen support
   scale: {
-    mode: Phaser.Scale.FIT, // Scale to fit container
+    mode: Phaser.Scale.RESIZE, // Resize to fill available space
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: GAME_WIDTH,
     height: GAME_HEIGHT,
+    min: {
+      width: 320,
+      height: 480,
+    },
+    max: {
+      width: 1920,
+      height: 1080,
+    },
   },
 
-  // No physics needed for Phase 0, will add in Phase 1
+  // Physics
   physics: {
     default: 'arcade',
     arcade: {

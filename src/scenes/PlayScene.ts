@@ -1,5 +1,13 @@
 import Phaser from 'phaser';
-import { COLORS, STARTING_DISTANCE, CATCH_DISTANCE } from '../config/gameConfig';
+import {
+  COLORS,
+  STARTING_DISTANCE,
+  CATCH_DISTANCE,
+  OIL_SLICK_COUNT,
+  OIL_SLICK_STUN_DURATION,
+  COLLECTIBLE_SPAWN_INTERVAL,
+  OBSTACLE_SPAWN_INTERVAL,
+} from '../config/gameConfig';
 import { Player } from '../entities/Player';
 import { Cop } from '../entities/Cop';
 import { Collectible, CollectibleType } from '../entities/Collectible';
@@ -23,19 +31,17 @@ export class PlayScene extends Phaser.Scene {
   // Collectibles
   private collectibles: Collectible[] = [];
   private spawnTimer: number = 0;
-  private spawnInterval: number = 1500; // ms between spawns
 
   // Obstacles
   private obstacles: Obstacle[] = [];
   private obstacleSpawnTimer: number = 0;
-  private obstacleSpawnInterval: number = 2000; // ms between obstacle spawns
 
   // Game state
   private score: number = 0;
   private coins: number = 0;
   private gameTime: number = 0;
   private isGameOver: boolean = false;
-  private oilSlicksRemaining: number = 2;
+  private oilSlicksRemaining: number = OIL_SLICK_COUNT;
   private hasShield: boolean = false;
 
   // Oil slicks dropped by player
@@ -64,22 +70,23 @@ export class PlayScene extends Phaser.Scene {
     this.coins = 0;
     this.gameTime = 0;
     this.isGameOver = false;
-    this.oilSlicksRemaining = 2;
+    this.oilSlicksRemaining = OIL_SLICK_COUNT;
     this.hasShield = false;
     this.collectibles = [];
     this.obstacles = [];
     this.oilSlicks = [];
+    this.roadLines = [];
     this.spawnTimer = 0;
     this.obstacleSpawnTimer = 0;
 
     // Create the road
     this.createRoad(width, height);
 
-    // Create player (positioned in lower third of screen)
-    this.player = new Player(this, width / 2, height * 0.65);
+    // Create player (positioned higher on screen for isometric feel - see more ahead)
+    this.player = new Player(this, width / 2, height * 0.75);
 
-    // Create cop (starts behind player)
-    this.cop = new Cop(this, width / 2, height * 0.65 + STARTING_DISTANCE);
+    // Create cop (starts behind player - off screen)
+    this.cop = new Cop(this, width / 2, height * 0.75 + STARTING_DISTANCE);
 
     // Create UI
     this.createUI(width);
@@ -102,8 +109,8 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private createRoad(width: number, height: number): void {
-    // Calculate road dimensions
-    this.roadWidth = width * 0.7;
+    // Calculate road dimensions - wider road for more room
+    this.roadWidth = width * 0.8;
     this.roadLeftEdge = (width - this.roadWidth) / 2;
 
     // Grass on left side
@@ -147,13 +154,13 @@ export class PlayScene extends Phaser.Scene {
     });
 
     // Cop distance display
-    this.copDistanceText = this.add.text(width - 20, 20, '🚔 300m', {
+    this.copDistanceText = this.add.text(width - 20, 20, '🚔 450m', {
       fontSize: '20px',
       color: '#ff6666',
     }).setOrigin(1, 0);
 
     // Oil slick counter
-    this.oilSlickText = this.add.text(width - 20, 50, '🛢️ x2 [SPACE]', {
+    this.oilSlickText = this.add.text(width - 20, 50, `🛢️ x${OIL_SLICK_COUNT} [SPACE]`, {
       fontSize: '16px',
       color: '#888888',
     }).setOrigin(1, 0);
@@ -287,16 +294,16 @@ export class PlayScene extends Phaser.Scene {
     // Scroll road lines
     this.scrollRoad(delta);
 
-    // Spawn collectibles
+    // Spawn collectibles (more frequently now)
     this.spawnTimer += delta;
-    if (this.spawnTimer >= this.spawnInterval) {
+    if (this.spawnTimer >= COLLECTIBLE_SPAWN_INTERVAL) {
       this.spawnTimer = 0;
       this.spawnCollectible();
     }
 
     // Spawn obstacles
     this.obstacleSpawnTimer += delta;
-    if (this.obstacleSpawnTimer >= this.obstacleSpawnInterval) {
+    if (this.obstacleSpawnTimer >= OBSTACLE_SPAWN_INTERVAL) {
       this.obstacleSpawnTimer = 0;
       this.spawnObstacle();
     }
@@ -349,12 +356,12 @@ export class PlayScene extends Phaser.Scene {
     // Spawn above screen
     const y = -30;
 
-    // Random type (weighted: coins more common)
+    // Random type - more boosts and shields now (40% coins, 35% boost, 25% shield)
     const rand = Math.random();
     let type: CollectibleType;
-    if (rand < 0.6) {
+    if (rand < 0.40) {
       type = 'coin';
-    } else if (rand < 0.85) {
+    } else if (rand < 0.75) {
       type = 'boost';
     } else {
       type = 'shield';
@@ -379,7 +386,7 @@ export class PlayScene extends Phaser.Scene {
         collectible.x, collectible.y
       );
 
-      if (dist < 40) {
+      if (dist < 45) {
         this.onCollect(collectible);
         this.collectibles.splice(i, 1);
         continue;
@@ -401,9 +408,9 @@ export class PlayScene extends Phaser.Scene {
         break;
 
       case 'boost':
-        this.player.applyBoost(2.0, 2000); // 2x speed for 2 seconds
-        // Push cop back a bit
-        this.cop.y += 100;
+        this.player.applyBoost(2.5, 2500); // 2.5x speed for 2.5 seconds
+        // Push cop back more
+        this.cop.y += 150;
         break;
 
       case 'shield':
@@ -497,7 +504,7 @@ export class PlayScene extends Phaser.Scene {
       );
 
       if (dist < 50 && !this.cop.isStunned) {
-        this.cop.stun(1000); // Stun for 1 second
+        this.cop.stun(OIL_SLICK_STUN_DURATION); // 4 seconds stun now!
         // Remove oil slick
         oil.destroy();
         this.oilSlicks.splice(i, 1);
@@ -519,8 +526,8 @@ export class PlayScene extends Phaser.Scene {
     if (this.hasShield) {
       this.hasShield = false;
       this.shieldIndicator.setVisible(false);
-      // Push cop back
-      this.cop.y += 150;
+      // Push cop back more
+      this.cop.y += 200;
       return;
     }
 
