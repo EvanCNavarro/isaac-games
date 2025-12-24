@@ -118,6 +118,13 @@ export class PlayScene extends Phaser.Scene {
   private isGameOver: boolean = false;
   private gameOverContainer!: Phaser.GameObjects.Container;
 
+  // Damage cooldown to prevent tween spam (MEMORY LEAK FIX)
+  private lastDamageTime: number = 0;
+  private damageCooldown: number = 500; // ms between damage ticks
+
+  // Wave spawning flag to prevent multiple spawns
+  private isSpawningWave: boolean = false;
+
   constructor() {
     super({ key: 'AI_PlayScene' });
   }
@@ -137,6 +144,8 @@ export class PlayScene extends Phaser.Scene {
     this.aliens = [];
     this.rayDistances = [];
     this.weaponPickups = [];
+    this.lastDamageTime = 0;
+    this.isSpawningWave = false;
 
     // Portal location (top-right corner)
     this.portalX = TILE_SIZE * 9.5;
@@ -318,7 +327,9 @@ export class PlayScene extends Phaser.Scene {
 
   private spawnWave(): void {
     const isBossWave = this.wave % WAVES_BEFORE_BOSS === 0;
-    const alienCount = isBossWave ? 1 : ALIENS_PER_WAVE + Math.floor(this.wave / 2);
+    // Cap alien count at 6 to prevent performance issues
+    const baseCount = ALIENS_PER_WAVE + Math.floor(this.wave / 2);
+    const alienCount = isBossWave ? 1 : Math.min(baseCount, 6);
 
     // Show wave announcement
     const { width, height } = this.scale;
@@ -447,10 +458,14 @@ export class PlayScene extends Phaser.Scene {
     // Render minimap
     this.renderMinimap();
 
-    // Check wave complete
-    if (this.aliens.length === 0) {
+    // Check wave complete (with flag to prevent multiple spawns)
+    if (this.aliens.length === 0 && !this.isSpawningWave) {
+      this.isSpawningWave = true;
       this.wave++;
-      this.time.delayedCall(1000, () => this.spawnWave());
+      this.time.delayedCall(1000, () => {
+        this.spawnWave();
+        this.isSpawningWave = false;
+      });
     }
   }
 
@@ -472,6 +487,12 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private collectWeapon(pickup: WeaponPickup): void {
+    // Cap weapons at 4 to prevent memory growth
+    if (this.weapons.length >= 4) {
+      // Replace oldest non-pistol weapon
+      this.weapons.splice(1, 1);
+    }
+
     // Add weapon to inventory
     this.weapons.push(pickup.weapon);
     this.currentWeaponIndex = this.weapons.length - 1;
@@ -971,8 +992,8 @@ export class PlayScene extends Phaser.Scene {
       onComplete: () => msg.destroy(),
     });
 
-    // Chance to drop weapon
-    if (Math.random() < 0.3 && this.weapons.length < 3) {
+    // Chance to drop weapon (dropWeapon checks max internally)
+    if (Math.random() < 0.3) {
       this.dropWeapon();
     }
 
@@ -980,6 +1001,9 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private dropWeapon(): void {
+    // Don't drop if already have max weapons
+    if (this.weapons.length >= 4) return;
+
     const newWeapons = [
       { name: 'Shotgun', emoji: '🔫', damage: 45, fireRate: 700, ammo: 15, maxAmmo: 15 },
       { name: 'Plasma', emoji: '⚡', damage: 30, fireRate: 200, ammo: 50, maxAmmo: 50 },
@@ -1030,9 +1054,13 @@ export class PlayScene extends Phaser.Scene {
       alien.angle = Math.atan2(dy, dx);
       alien.distance = dist;
 
-      // Attack if close
+      // Attack if close (with cooldown to prevent spam)
       if (dist < TILE_SIZE * 0.8) {
-        this.takeDamage(alien.isBoss ? BOSS_DAMAGE : ALIEN_DAMAGE);
+        const now = this.time.now;
+        if (now - this.lastDamageTime > this.damageCooldown) {
+          this.lastDamageTime = now;
+          this.takeDamage(alien.isBoss ? BOSS_DAMAGE : ALIEN_DAMAGE);
+        }
       }
     }
   }
@@ -1041,7 +1069,8 @@ export class PlayScene extends Phaser.Scene {
     this.playerHealth -= amount;
     this.healthText.setText(`❤️ ${Math.max(0, this.playerHealth)}`);
 
-    // Damage flash
+    // Damage flash - only one tween at a time
+    this.tweens.killTweensOf(this.damageOverlay);
     this.damageOverlay.setAlpha(0.4);
     this.tweens.add({
       targets: this.damageOverlay,
